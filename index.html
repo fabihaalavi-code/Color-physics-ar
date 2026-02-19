@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Color Physics AR</title>
+    <style>
+        :root { --glass: rgba(255, 255, 255, 0.1); --blur: blur(10px); }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background: #000; font-family: 'Segoe UI', Roboto, sans-serif; overflow: hidden; }
+        
+        #camera-view { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+        
+        .reticle { 
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 30px; height: 30px; border: 2px solid white; border-radius: 50%;
+            box-shadow: 0 0 10px rgba(0,0,0,0.5); z-index: 5;
+        }
+
+        .ui-panel {
+            position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%);
+            width: 90%; background: var(--glass); backdrop-filter: var(--blur);
+            border-radius: 24px; border: 1px solid rgba(255,255,255,0.2);
+            padding: 20px; box-sizing: border-box; color: white; z-index: 10;
+        }
+
+        .stats { display: flex; justify-content: space-between; margin-bottom: 15px; }
+        .stat-block { text-align: center; flex: 1; }
+        .val { font-family: monospace; font-size: 1.2rem; font-weight: bold; display: block; }
+        .lbl { font-size: 0.7rem; text-transform: uppercase; color: #ccc; }
+
+        .harmony-tray { display: flex; gap: 10px; margin-top: 10px; }
+        .swatch { flex: 1; height: 50px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.3); transition: transform 0.2s; }
+        .swatch-active { transform: scale(1.05); border: 2px solid white; }
+    </style>
+</head>
+<body>
+
+    <video id="camera-view" autoplay playsinline></video>
+    <div class="reticle"></div>
+    <canvas id="calc-canvas" style="display:none;"></canvas>
+
+    <div class="ui-panel">
+        <div class="stats">
+            <div class="stat-block">
+                <span class="lbl">Luminance (L*)</span>
+                <span id="l-val" class="val">0</span>
+            </div>
+            <div class="stat-block">
+                <span class="lbl">A* (Green-Red)</span>
+                <span id="a-val" class="val">0</span>
+            </div>
+            <div class="stat-block">
+                <span class="lbl">B* (Blue-Yellow)</span>
+                <span id="b-val" class="val">0</span>
+            </div>
+        </div>
+
+        <div class="lbl" style="margin-bottom: 5px;">Physics-Based Harmony (Complementary)</div>
+        <div class="harmony-tray">
+            <div id="source-color" class="swatch"></div>
+            <div id="comp-color" class="swatch"></div>
+        </div>
+    </div>
+
+    <script>
+        const video = document.getElementById('camera-view');
+        const canvas = document.getElementById('calc-canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+        async function initCamera() {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: 'environment' }, audio: false 
+            });
+            video.srcObject = stream;
+        }
+
+        function rgbToLab(r, g, b) {
+            // Step 1: RGB to XYZ
+            let _r = r / 255, _g = g / 255, _b = b / 255;
+            _r = _r > 0.04045 ? Math.pow((_r + 0.055) / 1.055, 2.4) : _r / 12.92;
+            _g = _g > 0.04045 ? Math.pow((_g + 0.055) / 1.055, 2.4) : _g / 12.92;
+            _b = _b > 0.04045 ? Math.pow((_b + 0.055) / 1.055, 2.4) : _b / 12.92;
+
+            let x = (_r * 41.24 + _g * 35.76 + _b * 18.05) / 95.047;
+            let y = (_r * 21.26 + _g * 71.52 + _b * 07.22) / 100.00;
+            let z = (_r * 01.19 + _g * 11.92 + _b * 95.05) / 108.883;
+
+            // Step 2: XYZ to Lab
+            x = x > 0.008856 ? Math.pow(x, 1/3) : (7.787 * x) + 16/116;
+            y = y > 0.008856 ? Math.pow(y, 1/3) : (7.787 * y) + 16/116;
+            z = z > 0.008856 ? Math.pow(z, 1/3) : (7.787 * z) + 16/116;
+
+            return {
+                L: (116 * y) - 16,
+                a: 500 * (x - y),
+                b: 200 * (y - z)
+            };
+        }
+
+        function tick() {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                canvas.width = 64; canvas.height = 64; // Low res for speed
+                ctx.drawImage(video, video.videoWidth/2-32, video.videoHeight/2-32, 64, 64, 0, 0, 64, 64);
+                const p = ctx.getImageData(32, 32, 1, 1).data;
+                const lab = rgbToLab(p[0], p[1], p[2]);
+
+                // Update UI
+                document.getElementById('l-val').innerText = Math.round(lab.L);
+                document.getElementById('a-val').innerText = Math.round(lab.a);
+                document.getElementById('b-val').innerText = Math.round(lab.b);
+                
+                document.getElementById('source-color').style.backgroundColor = `rgb(${p[0]},${p[1]},${p[2]})`;
+                
+                // Physics Harmony: The Complementary color is exactly opposite on the a* and b* axes
+                // L* remains the same to maintain "visual weight"
+                const compR = 255 - p[0];
+                const compG = 255 - p[1];
+                const compB = 255 - p[2];
+                document.getElementById('comp-color').style.backgroundColor = `rgb(${compR},${compG},${compB})`;
+            }
+            requestAnimationFrame(tick);
+        }
+
+        initCamera();
+        video.addEventListener('play', tick);
+    </script>
+</body>
+</html>
+Initial commit
